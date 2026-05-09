@@ -1,6 +1,6 @@
 {
   "name": "@askalf/pgflex",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "One Postgres API. Two modes. Real PostgreSQL (pg) for production, PGlite (in-process WASM) for standalone / dev. Same SQL, same query shape, drop the server when you don't need it.",
   "type": "module",
   "main": "./dist/index.js",
