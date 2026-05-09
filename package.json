@@ -1,0 +1,63 @@
+{
+  "name": "@askalf/pgflex",
+  "version": "0.0.1",
+  "description": "One Postgres API. Two modes. Real PostgreSQL (pg) for production, PGlite (in-process WASM) for standalone / dev. Same SQL, same query shape, drop the server when you don't need it.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test test/factory.test.mjs test/pglite.test.mjs",
+    "test:pg": "node --test test/pg.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "audit": "npm audit --production --audit-level=high",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "postgres",
+    "postgresql",
+    "pg",
+    "pglite",
+    "wasm",
+    "in-process",
+    "standalone",
+    "database",
+    "adapter",
+    "developer-tools"
+  ],
+  "author": "askalf (https://github.com/askalf)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/askalf/pgflex.git"
+  },
+  "homepage": "https://github.com/askalf/pgflex",
+  "bugs": {
+    "url": "https://github.com/askalf/pgflex/issues"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  },
+  "optionalDependencies": {
+    "@electric-sql/pglite": "^0.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@types/pg": "^8.11.0",
+    "typescript": "^6.0.3"
+  }
+}
