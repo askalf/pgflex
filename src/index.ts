@@ -17,11 +17,20 @@
  *
  *   const rows = await db.query('SELECT * FROM users WHERE active = $1', [true]);
  *
+ *   // LISTEN/NOTIFY — same API in both modes
+ *   const unlisten = await db.listen('events', (payload) => console.log(payload));
+ *   await db.notify('events', 'user.created');
+ *
  * Same SQL works in both modes. Pick the mode at startup; the rest of
  * your app sees one `DatabaseAdapter` interface.
  */
 
-export type { DatabaseAdapter, QueryResultRow, TransactionClient } from './interface.js';
+export type {
+  DatabaseAdapter,
+  NotificationHandler,
+  QueryResultRow,
+  TransactionClient,
+} from './interface.js';
 export { PgAdapter, type PgAdapterOptions } from './pg-adapter.js';
 export { PGliteAdapter, type PGliteAdapterOptions } from './pglite-adapter.js';
 

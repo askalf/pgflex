@@ -74,7 +74,30 @@ const transferred = await db.transaction(async (tx) => {
 });
 ```
 
-Auto-commits on return. Auto-rolls-back on throw.
+Auto-commits on return. Auto-rolls-back on throw. In `pglite` mode, concurrent `transaction()` calls queue on PGlite's exclusive lock instead of interleaving statements on the single shared connection — same isolation expectations as `pg` mode, where each transaction gets its own pooled connection.
+
+### LISTEN/NOTIFY
+
+```ts
+const unlisten = await db.listen('events', (payload) => {
+  console.log('got', payload);
+});
+
+await db.notify('events', 'user.created');
+
+// later
+await unlisten();
+```
+
+Same API in both modes. In `pg` mode, notifications arrive on one dedicated connection (separate from the pool) that auto-reconnects with capped exponential backoff and re-`LISTEN`s every subscribed channel if the server connection drops. In `pglite` mode it delegates to PGlite's native `listen()`. `notify()` uses `pg_notify()` under the hood, so channel names and payloads need no manual quoting.
+
+### Health check
+
+```ts
+app.get('/health', async () => ({ db: await db.ping() }));
+```
+
+`ping()` runs `SELECT 1` and returns `true`/`false` — it never throws, so it wires straight into a health endpoint.
 
 ## The interface
 
@@ -83,6 +106,9 @@ interface DatabaseAdapter {
   query<T>(text: string, params?: unknown[]): Promise<T[]>;
   queryOne<T>(text: string, params?: unknown[]): Promise<T | null>;
   transaction<T>(fn: (client: TransactionClient) => Promise<T>): Promise<T>;
+  listen(channel: string, handler: (payload: string) => void): Promise<() => Promise<void>>;
+  notify(channel: string, payload?: string): Promise<void>;
+  ping(): Promise<boolean>;
   close(): Promise<void>;
   readonly mode: 'pg' | 'pglite';
 }
@@ -102,7 +128,7 @@ const db = await createAdapter({
 await db.query('CREATE TABLE docs (id INT, embedding vector(1536))');
 ```
 
-v0.0.1 wires `vector` (pgvector) end-to-end — both the JS-side WASM hooks and `CREATE EXTENSION vector` happen during `init()`.
+`vector` (pgvector) is wired end-to-end — both the JS-side WASM hooks and `CREATE EXTENSION vector` happen during `init()`. PGlite 0.5 moved pgvector out of the core package into [`@electric-sql/pglite-pgvector`](https://www.npmjs.com/package/@electric-sql/pglite-pgvector) (in our `optionalDependencies`, so it's installed by default); the loader also falls back to the pre-0.5 `@electric-sql/pglite/vector` subpath, so both layouts work.
 
 Other PGlite contrib extensions (`uuid-ossp`, `pgcrypto`, `tsm_system_rows`, etc.) need their own JS-side import to register the WASM hooks. Listing them in the `extensions` array currently only runs `CREATE EXTENSION IF NOT EXISTS <name>`, which is enough for extensions baked into PGlite's core WASM but not enough for the contrib ones. Open an issue if you need one wired up; they're ~5 lines each.
 
@@ -110,16 +136,29 @@ In `pg` mode, extensions are the database admin's responsibility — they're eit
 
 ## Optional dependency
 
-`@electric-sql/pglite` is in `optionalDependencies`, so:
+`@electric-sql/pglite` (and `@electric-sql/pglite-pgvector`) are in `optionalDependencies`, so:
 
-- If you only ever use `pg` mode, you can install with `--no-optional` and skip the WASM bytes.
-- If you use `pglite` mode, it gets installed by default.
+- If you only ever use `pg` mode, you can install with `--omit=optional` and skip the WASM bytes.
+- If you use `pglite` mode, they get installed by default.
 
 If pglite mode is selected and the package isn't installed, `init()` throws a clear error telling you what to install.
 
-## Statement timeout
+## Pool tuning (pg mode)
 
-In `pg` mode, every connection gets `SET statement_timeout = 30000` automatically. Protects the pool from runaway queries. Override at the SQL level (`SET statement_timeout = ...`) or open an issue if you need it tunable from the adapter config.
+```ts
+const db = await createAdapter({
+  mode: 'pg',
+  connectionString: process.env.DATABASE_URL!,
+  pool: {
+    max: 20,                       // pool size
+    idleTimeoutMillis: 30_000,     // close idle connections
+    connectionTimeoutMillis: 15_000,
+    statementTimeoutMillis: 30_000, // per-connection statement_timeout; 0 = don't set
+  },
+});
+```
+
+All four default to the values shown — protective enough that a runaway query or exhausted pool can't deadlock the app. Pass `statementTimeoutMillis: 0` to leave the server's own `statement_timeout` in charge.
 
 ## Escape hatch
 
@@ -127,7 +166,7 @@ In `pg` mode, every connection gets `SET statement_timeout = 30000` automaticall
 import { PgAdapter } from '@askalf/pgflex';
 
 const adapter = new PgAdapter(process.env.DATABASE_URL!);
-const pool = adapter.getPool();  // raw pg.Pool — for LISTEN/NOTIFY etc.
+const pool = adapter.getPool();  // raw pg.Pool — for COPY, cursors, etc.
 ```
 
 Use sparingly. Code that touches the underlying pool won't work in pglite mode.

@@ -12,6 +12,47 @@ time, rename that heading to `## [X.Y.Z] - YYYY-MM-DD` and add a fresh
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-06-10
+
+First feature release since extraction.
+
+### Added
+
+- **LISTEN/NOTIFY across both modes** — `db.listen(channel, handler)`
+  returns an unlisten function; `db.notify(channel, payload?)` sends via
+  `pg_notify()` (no manual quoting). In `pg` mode notifications arrive
+  on one dedicated connection (separate from the pool) that
+  auto-reconnects with capped exponential backoff (1s → 30s) and
+  re-`LISTEN`s every subscribed channel after a drop. In `pglite` mode
+  it delegates to PGlite's native `listen()`.
+- `ping()` — `SELECT 1` liveness probe that returns `true`/`false` and
+  never throws. Wire it straight into a `/health` endpoint.
+- Pool tuning in `pg` mode: `idleTimeoutMillis`,
+  `connectionTimeoutMillis`, and `statementTimeoutMillis` (0 = don't
+  set) join `max` on `PgAdapterOptions`. Defaults unchanged.
+- `NotificationHandler` exported from the package root.
+
+### Changed
+
+- **PGlite 0.5 support** — `@electric-sql/pglite` bumped to `^0.5.1`.
+  PGlite 0.5 moved pgvector out of the core package; the extension
+  loader now tries `@electric-sql/pglite-pgvector` (new, added to
+  `optionalDependencies`) and falls back to the pre-0.5
+  `@electric-sql/pglite/vector` subpath, so both layouts work.
+- `pglite` transactions now delegate to PGlite's native exclusive
+  `transaction()` instead of hand-rolled `BEGIN`/`COMMIT`.
+
+### Fixed
+
+- **Concurrent `transaction()` calls in pglite mode no longer
+  interleave.** Previously two simultaneous transactions shared the
+  single connection's `BEGIN`/`COMMIT` and could lose writes; they now
+  queue on PGlite's exclusive lock (regression test included).
+- A failed `ROLLBACK` in `pg` mode (e.g. connection died
+  mid-transaction) no longer masks the error the transaction callback
+  actually threw; the broken client is handed back to the pool for
+  destruction instead of being reused.
+
 ## [0.0.2] - 2026-05-09 — npm-orphan
 
 (v0.0.1 was tagged + GitHub-released but never reached npm — the freshly-created repo didn't have an `NPM_TOKEN` secret yet, so the auto-release workflow's `npm publish` step exited `ENEEDAUTH`. After provisioning the token, the version-changed gate considered v0.0.1 already-shipped from its perspective, so this re-tag bumps to v0.0.2 with identical content. Same pattern as brio 0.0.1 → 0.0.2 → 0.0.3 a few hours ago.)

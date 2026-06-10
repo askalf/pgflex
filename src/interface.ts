@@ -13,6 +13,11 @@ export interface QueryResultRow {
   [key: string]: unknown;
 }
 
+/** Handler invoked for each NOTIFY received on a channel subscribed
+ *  via `listen()`. `payload` is the notification payload (empty string
+ *  when the NOTIFY carried none). */
+export type NotificationHandler = (payload: string) => void;
+
 export interface TransactionClient {
   query<T extends QueryResultRow = QueryResultRow>(
     text: string,
@@ -38,6 +43,25 @@ export interface DatabaseAdapter {
   transaction<T>(
     fn: (client: TransactionClient) => Promise<T>,
   ): Promise<T>;
+
+  /** Subscribe to a NOTIFY channel. The handler fires once per
+   *  notification. Returns an unlisten function — call it to remove
+   *  this handler (the channel subscription is dropped when its last
+   *  handler is removed). In `pg` mode notifications arrive on a
+   *  dedicated connection that auto-reconnects and re-LISTENs if the
+   *  server connection drops. */
+  listen(
+    channel: string,
+    handler: NotificationHandler,
+  ): Promise<() => Promise<void>>;
+
+  /** Send a NOTIFY on a channel (via `pg_notify`, so channel names and
+   *  payloads need no manual quoting). */
+  notify(channel: string, payload?: string): Promise<void>;
+
+  /** Liveness probe — runs `SELECT 1` and reports whether it succeeded.
+   *  Never throws; wire it straight into a `/health` endpoint. */
+  ping(): Promise<boolean>;
 
   /** Close the underlying connection / pool. */
   close(): Promise<void>;
