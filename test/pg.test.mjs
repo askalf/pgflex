@@ -44,3 +44,38 @@ t('pg: query / queryOne / transaction round-trip', async () => {
     await db.close();
   }
 });
+
+t('pg: listen/notify round-trip on the dedicated connection', async () => {
+  const db = await createAdapter({ mode: 'pg', connectionString: conn });
+  const channel = `pgflex_chan_${suffix}`;
+  try {
+    const received = [];
+    let resolveGot;
+    const got = new Promise((resolve) => { resolveGot = resolve; });
+    const unlisten = await db.listen(channel, (payload) => {
+      received.push(payload);
+      resolveGot();
+    });
+
+    await db.notify(channel, 'hello');
+    await got;
+    assert.deepEqual(received, ['hello']);
+
+    await unlisten();
+    await db.notify(channel, 'after-unlisten');
+    // Give a would-be stray notification time to arrive.
+    await new Promise((r) => setTimeout(r, 200));
+    assert.deepEqual(received, ['hello'], 'no delivery after unlisten');
+  } finally {
+    await db.close();
+  }
+});
+
+t('pg: ping reports liveness', async () => {
+  const db = await createAdapter({ mode: 'pg', connectionString: conn });
+  try {
+    assert.equal(await db.ping(), true);
+  } finally {
+    await db.close();
+  }
+});

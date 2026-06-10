@@ -99,7 +99,9 @@ test('pglite: transaction rolls back when fn throws', async () => {
 });
 
 test('pglite: opt-in extensions wire up correctly (pgvector end-to-end)', async () => {
-  // pgvector requires both JS-side wiring (loaded via @electric-sql/pglite/vector)
+  // pgvector requires both JS-side wiring (loaded from
+  // @electric-sql/pglite-pgvector on PGlite >= 0.5, or the legacy
+  // @electric-sql/pglite/vector subpath on <= 0.4)
   // and a SQL-side `CREATE EXTENSION vector`. Both run during init() when
   // we list 'vector' in the extensions array. After init the adapter
   // should be able to create vector-typed columns and round-trip values.
@@ -134,5 +136,87 @@ test('pglite: query before init() throws a clear error', async () => {
   } finally {
     // No init was called — close is still safe (no-op).
     await adapter.close();
+  }
+});
+
+test('pglite: listen/notify round-trip with payload', async () => {
+  const db = await createAdapter({ mode: 'pglite', dataDir: 'memory://' });
+  try {
+    const received = [];
+    let resolveGot;
+    const got = new Promise((resolve) => { resolveGot = resolve; });
+    // Awaiting listen() guarantees the subscription is active before
+    // the NOTIFY fires — no sleep needed.
+    await db.listen('pgflex_events', (payload) => {
+      received.push(payload);
+      resolveGot();
+    });
+    await db.notify('pgflex_events', 'user.created');
+    await got;
+
+    assert.deepEqual(received, ['user.created']);
+
+    // A NOTIFY with no payload arrives as an empty string.
+    let resolveEmpty;
+    const gotEmpty = new Promise((resolve) => { resolveEmpty = resolve; });
+    await db.listen('pgflex_empty', (payload) => resolveEmpty(payload));
+    await db.notify('pgflex_empty');
+    assert.equal(await gotEmpty, '');
+  } finally {
+    await db.close();
+  }
+});
+
+test('pglite: unlisten stops delivery', async () => {
+  const db = await createAdapter({ mode: 'pglite', dataDir: 'memory://' });
+  try {
+    const received = [];
+    const unlisten = await db.listen('pgflex_unsub', (payload) => received.push(payload));
+
+    await db.notify('pgflex_unsub', 'first');
+    // PGlite delivers notifications asynchronously after the NOTIFY
+    // query resolves — yield once before asserting.
+    await new Promise((r) => setTimeout(r, 10));
+    assert.deepEqual(received, ['first']);
+
+    await unlisten();
+    await db.notify('pgflex_unsub', 'second');
+    await new Promise((r) => setTimeout(r, 10));
+    assert.deepEqual(received, ['first'], 'no delivery after unlisten');
+  } finally {
+    await db.close();
+  }
+});
+
+test('pglite: ping reports liveness', async () => {
+  const db = await createAdapter({ mode: 'pglite', dataDir: 'memory://' });
+  assert.equal(await db.ping(), true);
+  await db.close();
+  assert.equal(await db.ping(), false, 'ping is false after close, never throws');
+});
+
+test('pglite: concurrent transactions serialize instead of interleaving', async () => {
+  const db = await createAdapter({ mode: 'pglite', dataDir: 'memory://' });
+  try {
+    await db.query('CREATE TABLE tally (id INT PRIMARY KEY, n INT NOT NULL)');
+    await db.query('INSERT INTO tally VALUES (1, 0)');
+
+    // Two read-modify-write transactions fired concurrently. On a
+    // single shared connection with hand-rolled BEGIN/COMMIT these
+    // interleave and one increment is lost (final n = 1). With
+    // PGlite's native exclusive transaction they queue (final n = 2).
+    const bump = () =>
+      db.transaction(async (client) => {
+        const { rows } = await client.query('SELECT n FROM tally WHERE id = 1');
+        await new Promise((r) => setTimeout(r, 20)); // widen the race window
+        await client.query('UPDATE tally SET n = $1 WHERE id = 1', [rows[0].n + 1]);
+      });
+
+    await Promise.all([bump(), bump()]);
+
+    const after = await db.queryOne('SELECT n FROM tally WHERE id = 1');
+    assert.deepEqual(after, { n: 2 }, 'both increments must land');
+  } finally {
+    await db.close();
   }
 });

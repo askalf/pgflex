@@ -8,18 +8,28 @@
  * mode and pglite mode — the whole point of the dual-adapter shape.
  *
  * `@electric-sql/pglite` is an `optionalDependencies` so `pg`-only users
- * don't pay for the WASM bytes. If you actually use pglite mode and the
- * package isn't installed, `init()` throws a clear error.
+ * can skip the WASM bytes (`--omit=optional`). If you actually use
+ * pglite mode and the package isn't installed, `init()` throws a clear
+ * error.
  *
  * Extensions are opt-in — pass `{ extensions: ['vector'] }` to load
- * pgvector at init. v0.0.1 wires `vector` end-to-end; other PGlite
- * contrib extensions (uuid-ossp, pgcrypto, etc.) need their own JS-side
- * import to register the WASM hooks, so listing them here will currently
- * run `CREATE EXTENSION IF NOT EXISTS <name>` but won't expose the
+ * pgvector at init. PGlite 0.5 moved pgvector out of the core package
+ * into `@electric-sql/pglite-pgvector` (also in our
+ * `optionalDependencies`); the loader below tries the new package
+ * first and falls back to the pre-0.5 `@electric-sql/pglite/vector`
+ * subpath, so both layouts work. Other PGlite contrib extensions
+ * (uuid-ossp, pgcrypto, etc.) need their own JS-side import to register
+ * the WASM hooks, so listing them here will currently run
+ * `CREATE EXTENSION IF NOT EXISTS <name>` but won't expose the
  * extension's functions. Open an issue if you need one wired up.
  */
 
-import type { DatabaseAdapter, QueryResultRow, TransactionClient } from './interface.js';
+import type {
+  DatabaseAdapter,
+  NotificationHandler,
+  QueryResultRow,
+  TransactionClient,
+} from './interface.js';
 
 export interface PGliteAdapterOptions {
   /** Filesystem path for persistent storage, or `memory://` for an
@@ -37,12 +47,17 @@ export interface PGliteAdapterOptions {
   verbose?: boolean;
 }
 
-// Minimal structural type for the PGlite instance — we only use these
-// three members. Avoids depending on `@electric-sql/pglite`'s types,
+// Minimal structural types for the PGlite instance — we only touch
+// these members. Avoids depending on `@electric-sql/pglite`'s types,
 // which would force the dep up to `dependencies` (defeating the
 // point of `optionalDependencies`).
+interface PGliteTransaction {
+  query(text: string, params?: unknown[]): Promise<{ rows?: unknown[] }>;
+}
 interface PGliteInstance {
   query(text: string, params?: unknown[]): Promise<{ rows?: unknown[] }>;
+  transaction<T>(cb: (tx: PGliteTransaction) => Promise<T>): Promise<T>;
+  listen(channel: string, cb: (payload: string) => void): Promise<() => Promise<void>>;
   close(): Promise<void>;
   waitReady: Promise<void>;
 }
@@ -68,17 +83,33 @@ async function ensurePGliteLoaded(): Promise<PGliteCtor> {
   }
 }
 
+// PGlite >= 0.5 ships pgvector as a standalone package; <= 0.4 had it
+// as a subpath of the core package. Try both, newest first. The
+// specifiers live in a variable so tsc doesn't try to statically
+// resolve a subpath that no longer exists in the installed version's
+// exports map.
+const VECTOR_MODULE_CANDIDATES: ReadonlyArray<string> = [
+  '@electric-sql/pglite-pgvector',
+  '@electric-sql/pglite/vector',
+];
+
 async function loadPgVectorExtension(): Promise<unknown> {
   if (pgVectorExt) return pgVectorExt;
-  try {
-    const mod = await import('@electric-sql/pglite/vector');
-    pgVectorExt = (mod as { vector: unknown }).vector;
-    return pgVectorExt;
-  } catch {
-    throw new Error(
-      'Failed to load pgvector extension. Your installed version of @electric-sql/pglite may not include it.',
-    );
+  for (const specifier of VECTOR_MODULE_CANDIDATES) {
+    try {
+      const mod = (await import(specifier)) as { vector?: unknown };
+      if (mod.vector) {
+        pgVectorExt = mod.vector;
+        return pgVectorExt;
+      }
+    } catch {
+      // Not installed under this layout — try the next candidate.
+    }
   }
+  throw new Error(
+    'Failed to load pgvector. On PGlite >= 0.5 install it with: npm install @electric-sql/pglite-pgvector ' +
+      '(older PGlite versions bundled it as @electric-sql/pglite/vector).',
+  );
 }
 
 export class PGliteAdapter implements DatabaseAdapter {
@@ -149,28 +180,49 @@ export class PGliteAdapter implements DatabaseAdapter {
   ): Promise<T> {
     if (!this.db) throw new Error('PGliteAdapter not initialized; call init() first');
 
-    // PGlite is single-process, single-connection — there's no separate
-    // "client" to check out. We satisfy the TransactionClient shape with
-    // a thin wrapper around the same db.
-    const db = this.db;
-    const client: TransactionClient = {
-      query: async <R extends QueryResultRow = QueryResultRow>(
-        text: string,
-        params?: unknown[],
-      ) => {
-        const result = await db.query(text, params);
-        return { rows: (result.rows ?? []) as R[] };
-      },
-    };
+    // Delegate to PGlite's native transaction(), which holds an
+    // exclusive lock for the duration — concurrent transaction() calls
+    // queue instead of interleaving BEGIN/COMMIT on the single shared
+    // connection, and standalone query() calls wait too. (Pre-0.1.0
+    // this was a hand-rolled BEGIN/COMMIT with neither guarantee.)
+    return this.db.transaction(async (tx) => {
+      const client: TransactionClient = {
+        query: async <R extends QueryResultRow = QueryResultRow>(
+          text: string,
+          params?: unknown[],
+        ) => {
+          const result = await tx.query(text, params);
+          return { rows: (result.rows ?? []) as R[] };
+        },
+      };
+      return fn(client);
+    });
+  }
 
-    await this.db.query('BEGIN');
+  // ── LISTEN/NOTIFY ──
+
+  async listen(
+    channel: string,
+    handler: NotificationHandler,
+  ): Promise<() => Promise<void>> {
+    if (!this.db) throw new Error('PGliteAdapter not initialized; call init() first');
+    const unsubscribe = await this.db.listen(channel, handler);
+    return async () => {
+      await unsubscribe();
+    };
+  }
+
+  async notify(channel: string, payload?: string): Promise<void> {
+    await this.query('SELECT pg_notify($1, $2)', [channel, payload ?? '']);
+  }
+
+  async ping(): Promise<boolean> {
+    if (!this.db) return false;
     try {
-      const result = await fn(client);
-      await this.db.query('COMMIT');
-      return result;
-    } catch (err) {
-      await this.db.query('ROLLBACK');
-      throw err;
+      await this.db.query('SELECT 1');
+      return true;
+    } catch {
+      return false;
     }
   }
 
