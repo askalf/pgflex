@@ -23,6 +23,11 @@ export interface TransactionClient {
     text: string,
     params?: unknown[],
   ): Promise<{ rows: T[] }>;
+
+  /** Run a multi-statement SQL script inside this transaction. Unlike
+   *  `query`, takes no parameters — scripts (DDL, seed files,
+   *  migrations) are executed verbatim. */
+  exec(sql: string): Promise<void>;
 }
 
 export interface DatabaseAdapter {
@@ -37,6 +42,13 @@ export interface DatabaseAdapter {
     text: string,
     params?: unknown[],
   ): Promise<T | null>;
+
+  /** Run a multi-statement SQL script (DDL, seed files, migration
+   *  files). Unlike `query`, takes no parameters and returns no rows —
+   *  the script is executed verbatim. In `pg` mode this uses the
+   *  simple query protocol (which allows multiple statements); in
+   *  `pglite` mode it delegates to PGlite's `exec()`. */
+  exec(sql: string): Promise<void>;
 
   /** Run a function inside a transaction. Auto-commits on success,
    *  rolls back if the function throws. */

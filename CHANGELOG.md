@@ -12,6 +12,21 @@ time, rename that heading to `## [X.Y.Z] - YYYY-MM-DD` and add a fresh
 
 ## [Unreleased]
 
+### Added
+
+- **`migrate(db, { dir })` — a tiny, dependency-free migration
+  runner.** Plain `.sql` files applied in lexicographic filename order,
+  tracked in a `pgflex_migrations` table (configurable via `table:`).
+  Each file runs in its own transaction with its tracking row — a
+  failure rolls back completely, is not recorded, and stops the run
+  with an error naming the file. Already-applied files are skipped, so
+  running it at every startup is the intended usage. Works on the
+  `DatabaseAdapter` interface, so the same migration files drive real
+  Postgres in production and PGlite in dev/CI.
+- `exec(sql)` on `DatabaseAdapter` and `TransactionClient` — run a
+  multi-statement SQL script verbatim (simple query protocol in `pg`
+  mode, PGlite's `exec()` in `pglite` mode).
+
 ## [0.1.0] - 2026-06-10
 
 First feature release since extraction.

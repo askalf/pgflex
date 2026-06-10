@@ -33,6 +33,7 @@ export type {
 } from './interface.js';
 export { PgAdapter, type PgAdapterOptions } from './pg-adapter.js';
 export { PGliteAdapter, type PGliteAdapterOptions } from './pglite-adapter.js';
+export { migrate, type MigrateOptions, type MigrateResult } from './migrate.js';
 
 import { PgAdapter, type PgAdapterOptions } from './pg-adapter.js';
 import { PGliteAdapter, type PGliteAdapterOptions } from './pglite-adapter.js';
