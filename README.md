@@ -99,12 +99,27 @@ app.get('/health', async () => ({ db: await db.ping() }));
 
 `ping()` runs `SELECT 1` and returns `true`/`false` — it never throws, so it wires straight into a health endpoint.
 
+### Migrations
+
+```ts
+import { migrate } from '@askalf/pgflex';
+
+const { applied, skipped } = await migrate(db, { dir: './migrations' });
+```
+
+A tiny, dependency-free runner with deliberately boring conventions: plain `.sql` files, applied in lexicographic filename order (`001_init.sql`, `002_add_users.sql`, ...), tracked in a `pgflex_migrations` table (rename via `table:`). Each file runs inside its own transaction together with its tracking row — a failed migration rolls back completely, is not recorded, and stops the run with an error naming the file. Already-applied files are skipped, so calling `migrate()` at every startup is the intended usage.
+
+Because it runs on the `DatabaseAdapter` interface, the **same migration files** drive real Postgres in production and PGlite in dev/CI — your schema setup stops being the thing that differs between modes.
+
+Multi-statement files work in both modes via the adapter's `exec()` (also public: `db.exec(sql)` runs any multi-statement script verbatim).
+
 ## The interface
 
 ```ts
 interface DatabaseAdapter {
   query<T>(text: string, params?: unknown[]): Promise<T[]>;
   queryOne<T>(text: string, params?: unknown[]): Promise<T | null>;
+  exec(sql: string): Promise<void>;  // multi-statement scripts
   transaction<T>(fn: (client: TransactionClient) => Promise<T>): Promise<T>;
   listen(channel: string, handler: (payload: string) => void): Promise<() => Promise<void>>;
   notify(channel: string, payload?: string): Promise<void>;
@@ -173,7 +188,7 @@ Use sparingly. Code that touches the underlying pool won't work in pglite mode.
 
 ## What it isn't
 
-- **Not an ORM.** It's a thin adapter. Bring your own query builder, schema-validator, migration tool. It composes with anything that can take a `query(text, params)` function.
+- **Not an ORM.** It's a thin adapter. Bring your own query builder and schema-validator (a minimal migration runner IS included — see above). It composes with anything that can take a `query(text, params)` function.
 - **Not a connection pooler.** `pg` mode uses `pg.Pool` directly; `pglite` mode is single-process by design.
 - **Not magic.** If you write `pg`-only SQL (e.g. `pg_sleep`, server-side functions you've installed yourself, advisory locks), it'll fail in pglite mode the same way `pg` would fail without those features.
 

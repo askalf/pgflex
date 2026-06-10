@@ -53,9 +53,11 @@ export interface PGliteAdapterOptions {
 // point of `optionalDependencies`).
 interface PGliteTransaction {
   query(text: string, params?: unknown[]): Promise<{ rows?: unknown[] }>;
+  exec(sql: string): Promise<unknown>;
 }
 interface PGliteInstance {
   query(text: string, params?: unknown[]): Promise<{ rows?: unknown[] }>;
+  exec(sql: string): Promise<unknown>;
   transaction<T>(cb: (tx: PGliteTransaction) => Promise<T>): Promise<T>;
   listen(channel: string, cb: (payload: string) => void): Promise<() => Promise<void>>;
   close(): Promise<void>;
@@ -175,6 +177,11 @@ export class PGliteAdapter implements DatabaseAdapter {
     return rows[0] ?? null;
   }
 
+  async exec(sql: string): Promise<void> {
+    if (!this.db) throw new Error('PGliteAdapter not initialized; call init() first');
+    await this.db.exec(sql);
+  }
+
   async transaction<T>(
     fn: (client: TransactionClient) => Promise<T>,
   ): Promise<T> {
@@ -193,6 +200,9 @@ export class PGliteAdapter implements DatabaseAdapter {
         ) => {
           const result = await tx.query(text, params);
           return { rows: (result.rows ?? []) as R[] };
+        },
+        exec: async (sql: string) => {
+          await tx.exec(sql);
         },
       };
       return fn(client);

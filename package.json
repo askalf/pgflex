@@ -18,7 +18,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "node --test test/factory.test.mjs test/pglite.test.mjs",
+    "test": "node --test test/factory.test.mjs test/pglite.test.mjs test/migrate.test.mjs",
     "test:pg": "node --test test/pg.test.mjs",
     "typecheck": "tsc --noEmit",
     "audit": "npm audit --production --audit-level=high",

@@ -105,13 +105,31 @@ export class PgAdapter implements DatabaseAdapter {
     return rows[0] ?? null;
   }
 
+  async exec(sql: string): Promise<void> {
+    // No parameters → pg uses the simple query protocol, which accepts
+    // multiple semicolon-separated statements in one call.
+    await this.pool.query(sql);
+  }
+
   async transaction<T>(
     fn: (client: TransactionClient) => Promise<T>,
   ): Promise<T> {
     const client = await this.pool.connect();
+    const txClient: TransactionClient = {
+      query: async <R extends QueryResultRow = QueryResultRow>(
+        text: string,
+        params?: unknown[],
+      ) => {
+        const result = await client.query<R>(text, params);
+        return { rows: result.rows };
+      },
+      exec: async (sql: string) => {
+        await client.query(sql);
+      },
+    };
     try {
       await client.query('BEGIN');
-      const result = await fn(client);
+      const result = await fn(txClient);
       await client.query('COMMIT');
       client.release();
       return result;
