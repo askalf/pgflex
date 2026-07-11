@@ -38,6 +38,10 @@
   ],
   "author": "askalf (https://github.com/askalf)",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "provenance": false
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/askalf/pgflex.git"
