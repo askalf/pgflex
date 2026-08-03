@@ -61,7 +61,7 @@
     "@electric-sql/pglite-pgvector": "^0.0.5"
   },
   "devDependencies": {
-    "@types/node": "^26.1.1",
+    "@types/node": "^26.1.2",
     "@types/pg": "^8.11.0",
     "typescript": "^7.0.2"
   }
