@@ -54,15 +54,15 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "pg": "^8.13.0"
+    "pg": "^8.23.0"
   },
   "optionalDependencies": {
-    "@electric-sql/pglite": "^0.5.1",
-    "@electric-sql/pglite-pgvector": "^0.0.5"
+    "@electric-sql/pglite": "^0.5.5",
+    "@electric-sql/pglite-pgvector": "^0.0.6"
   },
   "devDependencies": {
-    "@types/node": "^26.1.2",
-    "@types/pg": "^8.20.4",
+    "@types/node": "^26.2.0",
+    "@types/pg": "^8.21.0",
     "typescript": "^7.0.2"
   }
 }
